@@ -35,7 +35,7 @@ Other rules:
 """
 
 # 3. Elegir el modelo de IA (Gemini Flash es rápido y gratis)
-modelo = genai.GenerativeModel('gemini-2.0-flash-exp', system_instruction=instrucciones_didasko)
+modelo = genai.GenerativeModel('gemini-2.5-flash-lite', system_instruction=instrucciones_didasko)
 
 # Ruta de bienvenida (también multilenguaje)
 @app.route('/')
