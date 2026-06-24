@@ -1,6 +1,8 @@
 import os
+import base64
 from flask import Flask, request, jsonify
 import google.generativeai as genai
+from urllib.parse import quote
 
 app = Flask(__name__)
 
@@ -8,7 +10,7 @@ app = Flask(__name__)
 api_key = os.environ.get('GEMINI_API_KEY')
 genai.configure(api_key=api_key)
 
-# 2. La personalidad de Didasko (El cerebro - Multilenguaje)
+# 2. La personalidad de Didasko
 instrucciones_didasko = """
 You are Didasko, an expert, wise and patient educational tutor.
 Your name comes from the Greek 'διδάσκω' which means 'to teach'.
@@ -19,14 +21,14 @@ Your capabilities:
 - Guide research with sources and methodology.
 - Solve school problems step by step (math, science, history, etc.).
 - Write personalized speeches (ask who will deliver it and what they want to convey).
+- Analyze homework photos and solve them step by step.
+- Read and explain text from images.
 
 IMPORTANT LANGUAGE RULE:
 - ALWAYS detect the language of the user's input.
 - ALWAYS respond in the SAME language the user wrote to you.
 - If the user writes in Spanish, respond in Spanish.
 - If the user writes in English, respond in English.
-- If the user writes in Portuguese, respond in Portuguese.
-- And so on with any language.
 
 Other rules:
 - Be clear, didactic and encourage the student.
@@ -34,31 +36,76 @@ Other rules:
 - Always be respectful and motivating.
 """
 
-# 3. Elegir el modelo de IA (Gemini Flash es rápido y gratis)
+# 3. Modelo de Gemini (texto + visión)
 modelo = genai.GenerativeModel('gemini-2.5-flash-lite', system_instruction=instrucciones_didasko)
 
-# Ruta de bienvenida (también multilenguaje)
+# RUTA 1: Bienvenida
 @app.route('/')
 def home():
     return jsonify({
         "message": "Welcome to DidaskoAI",
         "mensaje": "Bienvenido a DidaskoAI",
-        "status": "running"
+        "status": "running",
+        "endpoints": ["/chat", "/vision", "/image"]
     })
 
-# Ruta para el Chat con la IA
+# RUTA 2: Chat de texto
 @app.route('/chat', methods=['POST'])
 def chat():
     datos = request.get_json()
     mensaje_usuario = datos.get('message', '')
 
     if not mensaje_usuario:
-        return jsonify({"error": "No message received / No enviaste ningún mensaje"}), 400
+        return jsonify({"error": "No message received"}), 400
 
     try:
-        # Didasko detecta el idioma y responde en el mismo
         respuesta = modelo.generate_content(mensaje_usuario)
         return jsonify({"respuesta": respuesta.text})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# RUTA 3: Analizar imagen (Gemini Vision)
+@app.route('/vision', methods=['POST'])
+def vision():
+    datos = request.get_json()
+    imagen_base64 = datos.get('image', '')
+    pregunta = datos.get('message', 'Analiza esta imagen y ayúdame con lo que veas')
+
+    if not imagen_base64:
+        return jsonify({"error": "No image received"}), 400
+
+    try:
+        # Decodificar la imagen
+        imagen_bytes = base64.b64decode(imagen_base64)
+        imagen_parte = {
+            "mime_type": "image/jpeg",
+            "data": imagen_bytes
+        }
+        
+        respuesta = modelo.generate_content([pregunta, imagen_parte])
+        return jsonify({"respuesta": respuesta.text})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# RUTA 4: Generar imagen (Pollinations)
+@app.route('/image', methods=['POST'])
+def generate_image():
+    datos = request.get_json()
+    prompt = datos.get('prompt', '')
+
+    if not prompt:
+        return jsonify({"error": "No prompt received"}), 400
+
+    try:
+        # Pollinations genera imágenes con solo una URL
+        prompt_codificado = quote(prompt)
+        url_imagen = f"https://image.pollinations.ai/prompt/{prompt_codificado}?width=512&height=512&nologo=true"
+        
+        return jsonify({
+            "url": url_imagen,
+            "prompt": prompt,
+            "mensaje": "Imagen generada exitosamente"
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
