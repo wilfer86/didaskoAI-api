@@ -27,8 +27,6 @@ Your capabilities:
 IMPORTANT LANGUAGE RULE:
 - ALWAYS detect the language of the user's input.
 - ALWAYS respond in the SAME language the user wrote to you.
-- If the user writes in Spanish, respond in Spanish.
-- If the user writes in English, respond in English.
 
 Other rules:
 - Be clear, didactic and encourage the student.
@@ -38,6 +36,23 @@ Other rules:
 
 # 3. Modelo de Gemini (texto + visión)
 modelo = genai.GenerativeModel('gemini-2.5-flash-lite', system_instruction=instrucciones_didasko)
+
+# Función para mejorar el prompt automáticamente con Gemini
+def mejorar_prompt(prompt_original):
+    """Usa Gemini para convertir el prompt en uno más profesional"""
+    try:
+        instruccion = f"""
+        Convierte este prompt en uno más detallado y profesional para generar una imagen de alta calidad.
+        Agrega detalles sobre: iluminación, estilo, calidad, composición.
+        Mantén la idea original pero hazla más rica.
+        Responde SOLO con el prompt mejorado en INGLÉS, sin explicaciones.
+        
+        Prompt original: {prompt_original}
+        """
+        respuesta = modelo.generate_content(instruccion)
+        return respuesta.text.strip()
+    except:
+        return prompt_original  # Si falla, usa el original
 
 # RUTA 1: Bienvenida
 @app.route('/')
@@ -86,12 +101,15 @@ def vision():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# RUTA 4: Generar imagen (Pollinations) - CON FORMATOS
+# RUTA 4: Generar imagen MEJORADA
 @app.route('/image', methods=['POST'])
 def generate_image():
     datos = request.get_json()
     prompt = datos.get('prompt', '')
     formato = datos.get('format', '1:1')
+    modelo_img = datos.get('model', 'flux')  # flux, turbo
+    mejorar = datos.get('enhance', True)  # Mejorar prompt automáticamente
+    semilla = datos.get('seed', '')  # Para variar resultados
 
     if not prompt:
         return jsonify({"error": "No prompt received"}), 400
@@ -117,14 +135,30 @@ def generate_image():
     width, height = formatos[formato]
 
     try:
-        prompt_codificado = quote(prompt)
-        url_imagen = f"https://image.pollinations.ai/prompt/{prompt_codificado}?width={width}&height={height}&nologo=true"
+        # Si está activado, mejora el prompt con Gemini
+        prompt_final = prompt
+        if mejorar:
+            prompt_mejorado = mejorar_prompt(prompt)
+            prompt_final = prompt_mejorado
+
+        # Agregar tags de calidad al prompt
+        prompt_con_calidad = f"{prompt_final}, high quality, detailed, professional, 8k, masterpiece"
+        
+        prompt_codificado = quote(prompt_con_calidad)
+        
+        # Construir URL con parámetros
+        url_imagen = f"https://image.pollinations.ai/prompt/{prompt_codificado}?width={width}&height={height}&model={modelo_img}&nologo=true&enhance=true"
+        
+        if semilla:
+            url_imagen += f"&seed={semilla}"
         
         return jsonify({
             "url": url_imagen,
-            "prompt": prompt,
+            "prompt_original": prompt,
+            "prompt_mejorado": prompt_final,
             "formato": formato,
             "dimensiones": f"{width}x{height}",
+            "modelo": modelo_img,
             "mensaje": "Imagen generada exitosamente"
         })
     except Exception as e:
