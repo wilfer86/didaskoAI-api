@@ -64,7 +64,7 @@ def home():
         "message": "Welcome to DidaskoAI",
         "mensaje": "Bienvenido a DidaskoAI",
         "status": "running",
-        "endpoints": ["/chat", "/vision", "/image", "/image-flux", "/image-kolors"]
+        "endpoints": ["/chat", "/vision", "/image", "/image-flux", "/image-qwen"]
     })
 
 # RUTA 2: Chat de texto
@@ -184,9 +184,9 @@ def generate_image_flux():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# RUTA 6: Generar imagen con KOLORS (PERSONAS REALISTAS)
-@app.route('/image-kolors', methods=['POST'])
-def generate_image_kolors():
+# RUTA 6: Generar imagen con QWEN (MEJOR CALIDAD)
+@app.route('/image-qwen', methods=['POST'])
+def generate_image_qwen():
     datos = request.get_json()
     prompt = datos.get('prompt', '')
     formato = datos.get('format', '1:1')
@@ -206,7 +206,7 @@ def generate_image_kolors():
         # Mejorar prompt con Gemini
         prompt_mejorado = mejorar_prompt(prompt)
         
-        # Agregar tags de calidad para personas
+        # Agregar tags de calidad
         prompt_final = f"{prompt_mejorado}, photorealistic, highly detailed, perfect anatomy, professional photography, sharp focus, 8k uhd, masterpiece"
         
         # Negative prompt (lo que NO queremos)
@@ -218,7 +218,7 @@ def generate_image_kolors():
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "Kwai-Kolors/Kolors",
+            "model": "Qwen/Qwen-Image",
             "prompt": prompt_final,
             "negative_prompt": negative_prompt,
             "image_size": image_size,
@@ -234,8 +234,8 @@ def generate_image_kolors():
                 "url": data['images'][0]['url'],
                 "prompt_original": prompt,
                 "prompt_mejorado": prompt_final,
-                "modelo": "kolors",
-                "mensaje": "Imagen generada con Kolors (alta calidad)"
+                "modelo": "qwen-image",
+                "mensaje": "Imagen generada con Qwen (alta calidad)"
             })
         else:
             return jsonify({
