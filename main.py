@@ -64,7 +64,7 @@ def home():
         "message": "Welcome to DidaskoAI",
         "mensaje": "Bienvenido a DidaskoAI",
         "status": "running",
-        "endpoints": ["/chat", "/vision", "/image", "/image-flux"]
+        "endpoints": ["/chat", "/vision", "/image", "/image-flux", "/image-kolors"]
     })
 
 # RUTA 2: Chat de texto
@@ -117,11 +117,7 @@ def generate_image():
     formatos = {
         "1:1": (1024, 1024),
         "16:9": (1280, 720),
-        "9:16": (720, 1280),
-        "4:3": (1024, 768),
-        "3:4": (768, 1024),
-        "2:3": (768, 1152),
-        "3:2": (1152, 768)
+        "9:16": (720, 1280)
     }
 
     width, height = formatos.get(formato, (1024, 1024))
@@ -133,15 +129,13 @@ def generate_image():
         
         return jsonify({
             "url": url_imagen,
-            "prompt_original": prompt,
-            "prompt_mejorado": prompt_mejorado,
-            "modelo": "pollinations-flux",
-            "mensaje": "Imagen generada exitosamente"
+            "modelo": "pollinations",
+            "mensaje": "Imagen generada"
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# RUTA 5: Generar imagen con SiliconFlow Flux (PRINCIPAL - ALTA CALIDAD)
+# RUTA 5: Generar imagen con Flux Schnell
 @app.route('/image-flux', methods=['POST'])
 def generate_image_flux():
     datos = request.get_json()
@@ -154,18 +148,14 @@ def generate_image_flux():
     formatos = {
         "1:1": "1024x1024",
         "16:9": "1280x720",
-        "9:16": "720x1280",
-        "4:3": "1024x768",
-        "3:4": "768x1024"
+        "9:16": "720x1280"
     }
 
     image_size = formatos.get(formato, "1024x1024")
 
     try:
-        # Mejorar prompt con Gemini
         prompt_mejorado = mejorar_prompt(prompt)
         
-        # Llamar a SiliconFlow
         url = "https://api.siliconflow.com/v1/images/generations"
         headers = {
             "Authorization": f"Bearer {siliconflow_api_key}",
@@ -183,14 +173,69 @@ def generate_image_flux():
         
         if response.status_code == 200:
             data = response.json()
-            url_imagen = data['images'][0]['url']
-            
             return jsonify({
-                "url": url_imagen,
+                "url": data['images'][0]['url'],
+                "modelo": "flux-schnell",
+                "mensaje": "Imagen generada"
+            })
+        else:
+            return jsonify({"error": response.text}), 500
+            
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# RUTA 6: Generar imagen con KOLORS (PERSONAS REALISTAS)
+@app.route('/image-kolors', methods=['POST'])
+def generate_image_kolors():
+    datos = request.get_json()
+    prompt = datos.get('prompt', '')
+    formato = datos.get('format', '1:1')
+
+    if not prompt:
+        return jsonify({"error": "No prompt received"}), 400
+
+    formatos = {
+        "1:1": "1024x1024",
+        "16:9": "1280x720",
+        "9:16": "720x1280"
+    }
+
+    image_size = formatos.get(formato, "1024x1024")
+
+    try:
+        # Mejorar prompt con Gemini
+        prompt_mejorado = mejorar_prompt(prompt)
+        
+        # Agregar tags de calidad para personas
+        prompt_final = f"{prompt_mejorado}, photorealistic, highly detailed, perfect anatomy, professional photography, sharp focus, 8k uhd, masterpiece"
+        
+        # Negative prompt (lo que NO queremos)
+        negative_prompt = "deformed faces, bad anatomy, mutated hands, extra fingers, blurry, low quality, ugly, distorted, watermark, text"
+        
+        url = "https://api.siliconflow.com/v1/images/generations"
+        headers = {
+            "Authorization": f"Bearer {siliconflow_api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "Kwai-Kolors/Kolors",
+            "prompt": prompt_final,
+            "negative_prompt": negative_prompt,
+            "image_size": image_size,
+            "num_inference_steps": 30,
+            "guidance_scale": 7.5
+        }
+        
+        response = requests.post(url, headers=headers, json=payload, timeout=120)
+        
+        if response.status_code == 200:
+            data = response.json()
+            return jsonify({
+                "url": data['images'][0]['url'],
                 "prompt_original": prompt,
-                "prompt_mejorado": prompt_mejorado,
-                "modelo": "siliconflow-flux-schnell",
-                "mensaje": "Imagen generada con alta calidad"
+                "prompt_mejorado": prompt_final,
+                "modelo": "kolors",
+                "mensaje": "Imagen generada con Kolors (alta calidad)"
             })
         else:
             return jsonify({
