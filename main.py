@@ -1,14 +1,17 @@
 import os
 import base64
+import requests
 from flask import Flask, request, jsonify
 import google.generativeai as genai
 from urllib.parse import quote
 
 app = Flask(__name__)
 
-# 1. Conectar con la clave secreta de Render
-api_key = os.environ.get('GEMINI_API_KEY')
-genai.configure(api_key=api_key)
+# 1. Conectar con las claves secretas de Render
+gemini_api_key = os.environ.get('GEMINI_API_KEY')
+siliconflow_api_key = os.environ.get('SILICONFLOW_API_KEY')
+
+genai.configure(api_key=gemini_api_key)
 
 # 2. La personalidad de Didasko
 instrucciones_didasko = """
@@ -37,22 +40,22 @@ Other rules:
 # 3. Modelo de Gemini (texto + visión)
 modelo = genai.GenerativeModel('gemini-2.5-flash-lite', system_instruction=instrucciones_didasko)
 
-# Función para mejorar el prompt automáticamente con Gemini
+# Función para mejorar el prompt con Gemini
 def mejorar_prompt(prompt_original):
-    """Usa Gemini para convertir el prompt en uno más profesional"""
+    """Convierte el prompt en uno más profesional en inglés"""
     try:
         instruccion = f"""
-        Convierte este prompt en uno más detallado y profesional para generar una imagen de alta calidad.
-        Agrega detalles sobre: iluminación, estilo, calidad, composición.
-        Mantén la idea original pero hazla más rica.
-        Responde SOLO con el prompt mejorado en INGLÉS, sin explicaciones.
+        Convert this prompt into a detailed, professional image generation prompt.
+        Add: lighting, style, quality, composition details.
+        Keep the original idea but enhance it.
+        Respond ONLY with the enhanced prompt in ENGLISH, no explanations.
         
-        Prompt original: {prompt_original}
+        Original: {prompt_original}
         """
         respuesta = modelo.generate_content(instruccion)
         return respuesta.text.strip()
     except:
-        return prompt_original  # Si falla, usa el original
+        return prompt_original
 
 # RUTA 1: Bienvenida
 @app.route('/')
@@ -61,7 +64,7 @@ def home():
         "message": "Welcome to DidaskoAI",
         "mensaje": "Bienvenido a DidaskoAI",
         "status": "running",
-        "endpoints": ["/chat", "/vision", "/image"]
+        "endpoints": ["/chat", "/vision", "/image", "/image-flux"]
     })
 
 # RUTA 2: Chat de texto
@@ -101,15 +104,12 @@ def vision():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# RUTA 4: Generar imagen MEJORADA
+# RUTA 4: Generar imagen con Pollinations (RESPALDO)
 @app.route('/image', methods=['POST'])
 def generate_image():
     datos = request.get_json()
     prompt = datos.get('prompt', '')
     formato = datos.get('format', '1:1')
-    modelo_img = datos.get('model', 'flux')  # flux, turbo
-    mejorar = datos.get('enhance', True)  # Mejorar prompt automáticamente
-    semilla = datos.get('seed', '')  # Para variar resultados
 
     if not prompt:
         return jsonify({"error": "No prompt received"}), 400
@@ -121,46 +121,83 @@ def generate_image():
         "4:3": (1024, 768),
         "3:4": (768, 1024),
         "2:3": (768, 1152),
-        "3:2": (1152, 768),
-        "21:9": (1536, 640),
-        "banner": (1920, 480),
-        "poster": (1024, 1536)
+        "3:2": (1152, 768)
     }
 
-    if formato not in formatos:
-        return jsonify({
-            "error": f"Formato no válido. Usa uno de: {list(formatos.keys())}"
-        }), 400
-
-    width, height = formatos[formato]
+    width, height = formatos.get(formato, (1024, 1024))
 
     try:
-        # Si está activado, mejora el prompt con Gemini
-        prompt_final = prompt
-        if mejorar:
-            prompt_mejorado = mejorar_prompt(prompt)
-            prompt_final = prompt_mejorado
-
-        # Agregar tags de calidad al prompt
-        prompt_con_calidad = f"{prompt_final}, high quality, detailed, professional, 8k, masterpiece"
-        
-        prompt_codificado = quote(prompt_con_calidad)
-        
-        # Construir URL con parámetros
-        url_imagen = f"https://image.pollinations.ai/prompt/{prompt_codificado}?width={width}&height={height}&model={modelo_img}&nologo=true&enhance=true"
-        
-        if semilla:
-            url_imagen += f"&seed={semilla}"
+        prompt_mejorado = mejorar_prompt(prompt)
+        prompt_codificado = quote(prompt_mejorado)
+        url_imagen = f"https://image.pollinations.ai/prompt/{prompt_codificado}?width={width}&height={height}&model=flux&nologo=true&enhance=true"
         
         return jsonify({
             "url": url_imagen,
             "prompt_original": prompt,
-            "prompt_mejorado": prompt_final,
-            "formato": formato,
-            "dimensiones": f"{width}x{height}",
-            "modelo": modelo_img,
+            "prompt_mejorado": prompt_mejorado,
+            "modelo": "pollinations-flux",
             "mensaje": "Imagen generada exitosamente"
         })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# RUTA 5: Generar imagen con SiliconFlow Flux (PRINCIPAL - ALTA CALIDAD)
+@app.route('/image-flux', methods=['POST'])
+def generate_image_flux():
+    datos = request.get_json()
+    prompt = datos.get('prompt', '')
+    formato = datos.get('format', '1:1')
+
+    if not prompt:
+        return jsonify({"error": "No prompt received"}), 400
+
+    formatos = {
+        "1:1": "1024x1024",
+        "16:9": "1280x720",
+        "9:16": "720x1280",
+        "4:3": "1024x768",
+        "3:4": "768x1024"
+    }
+
+    image_size = formatos.get(formato, "1024x1024")
+
+    try:
+        # Mejorar prompt con Gemini
+        prompt_mejorado = mejorar_prompt(prompt)
+        
+        # Llamar a SiliconFlow
+        url = "https://api.siliconflow.com/v1/images/generations"
+        headers = {
+            "Authorization": f"Bearer {siliconflow_api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "black-forest-labs/FLUX.1-schnell",
+            "prompt": prompt_mejorado,
+            "image_size": image_size,
+            "num_inference_steps": 4,
+            "guidance_scale": 1
+        }
+        
+        response = requests.post(url, headers=headers, json=payload, timeout=60)
+        
+        if response.status_code == 200:
+            data = response.json()
+            url_imagen = data['images'][0]['url']
+            
+            return jsonify({
+                "url": url_imagen,
+                "prompt_original": prompt,
+                "prompt_mejorado": prompt_mejorado,
+                "modelo": "siliconflow-flux-schnell",
+                "mensaje": "Imagen generada con alta calidad"
+            })
+        else:
+            return jsonify({
+                "error": f"SiliconFlow error: {response.text}",
+                "status_code": response.status_code
+            }), 500
+            
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
