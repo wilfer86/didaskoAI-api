@@ -39,7 +39,7 @@ Reglas generales:
 
 modelo_gemini = genai.GenerativeModel('gemini-2.5-flash-lite', system_instruction=instrucciones_didasko)
 
-# Función para mejorar prompt
+# Función para mejorar prompt (usa Gemini gratis)
 def mejorar_prompt(prompt_original):
     try:
         instruccion = f"""Convert this prompt into a detailed, professional prompt for AI generation.
@@ -53,7 +53,32 @@ Original: {prompt_original}"""
     except:
         return prompt_original
 
-# DeepSeek V3 vía SiliconFlow
+# CHAT BARATO: Qwen 2.5 7B (por defecto, ahorra créditos)
+def chat_qwen(mensaje_usuario):
+    url = "https://api.siliconflow.com/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {siliconflow_api_key}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "Qwen/Qwen2.5-7B-Instruct",
+        "messages": [
+            {"role": "system", "content": instrucciones_didasko},
+            {"role": "user", "content": mensaje_usuario}
+        ],
+        "temperature": 0.7,
+        "max_tokens": 2000
+    }
+    
+    response = requests.post(url, headers=headers, json=payload, timeout=60)
+    
+    if response.status_code == 200:
+        data = response.json()
+        return data['choices'][0]['message']['content']
+    else:
+        raise Exception(f"Qwen error: {response.text}")
+
+# CHAT PREMIUM: DeepSeek V3 (solo cuando se pida)
 def chat_deepseek(mensaje_usuario):
     url = "https://api.siliconflow.com/v1/chat/completions"
     headers = {
@@ -78,6 +103,7 @@ def chat_deepseek(mensaje_usuario):
     else:
         raise Exception(f"DeepSeek error: {response.text}")
 
+# CHAT RESPALDO: Gemini (gratis con cuota diaria)
 def chat_gemini(mensaje_usuario):
     respuesta = modelo_gemini.generate_content(mensaje_usuario)
     return respuesta.text
@@ -89,15 +115,45 @@ def home():
         "message": "Welcome to DidaskoAI",
         "mensaje": "Bienvenido a DidaskoAI",
         "status": "running",
-        "endpoints": ["/chat", "/vision", "/image", "/image-flux", "/image-qwen", "/video"],
-        "modelo_principal": "DeepSeek V3",
-        "modelo_respaldo": "Gemini",
-        "video_disponible": "Wan 2.2 (limitado - primeros usuarios)"
+        "endpoints": ["/chat", "/chat-premium", "/vision", "/image", "/image-flux", "/image-qwen", "/video"],
+        "modelo_default": "Qwen 2.5 7B (ahorra créditos)",
+        "modelo_premium": "DeepSeek V3",
+        "modelo_respaldo": "Gemini"
     })
 
-# RUTA 2: Chat
+# RUTA 2: Chat NORMAL (BARATO - usa Qwen por defecto)
 @app.route('/chat', methods=['POST'])
 def chat():
+    datos = request.get_json()
+    mensaje_usuario = datos.get('message', '')
+
+    if not mensaje_usuario:
+        return jsonify({"error": "No message received"}), 400
+
+    # Intentar Qwen primero (barato)
+    try:
+        respuesta_texto = chat_qwen(mensaje_usuario)
+        return jsonify({
+            "respuesta": respuesta_texto,
+            "modelo": "qwen-2.5-7b"
+        })
+    except Exception as e1:
+        # Si falla, usar Gemini (gratis)
+        try:
+            respuesta_texto = chat_gemini(mensaje_usuario)
+            return jsonify({
+                "respuesta": respuesta_texto,
+                "modelo": "gemini-respaldo"
+            })
+        except Exception as e2:
+            return jsonify({
+                "error": "Modelos no disponibles",
+                "details": str(e1)
+            }), 500
+
+# RUTA 3: Chat PREMIUM (DeepSeek - solo para usuarios PRO)
+@app.route('/chat-premium', methods=['POST'])
+def chat_premium():
     datos = request.get_json()
     mensaje_usuario = datos.get('message', '')
 
@@ -108,23 +164,20 @@ def chat():
         respuesta_texto = chat_deepseek(mensaje_usuario)
         return jsonify({
             "respuesta": respuesta_texto,
-            "modelo": "deepseek-v3"
+            "modelo": "deepseek-v3-premium"
         })
-    except Exception as e1:
+    except Exception as e:
+        # Si falla DeepSeek, usar Qwen
         try:
-            respuesta_texto = chat_gemini(mensaje_usuario)
+            respuesta_texto = chat_qwen(mensaje_usuario)
             return jsonify({
                 "respuesta": respuesta_texto,
-                "modelo": "gemini-respaldo"
+                "modelo": "qwen-respaldo"
             })
         except Exception as e2:
-            return jsonify({
-                "error": "Ambos modelos fallaron",
-                "deepseek_error": str(e1),
-                "gemini_error": str(e2)
-            }), 500
+            return jsonify({"error": str(e)}), 500
 
-# RUTA 3: Vision
+# RUTA 4: Vision (Gemini gratis)
 @app.route('/vision', methods=['POST'])
 def vision():
     datos = request.get_json()
@@ -146,7 +199,7 @@ def vision():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# RUTA 4: Pollinations
+# RUTA 5: Pollinations (GRATIS ILIMITADO - respaldo eterno)
 @app.route('/image', methods=['POST'])
 def generate_image():
     datos = request.get_json()
@@ -177,7 +230,7 @@ def generate_image():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# RUTA 5: Flux
+# RUTA 6: Flux Schnell (BARATO - usar por defecto en app)
 @app.route('/image-flux', methods=['POST'])
 def generate_image_flux():
     datos = request.get_json()
@@ -221,12 +274,19 @@ def generate_image_flux():
                 "mensaje": "Imagen generada"
             })
         else:
-            return jsonify({"error": response.text}), 500
+            # Si falla, usar Pollinations como respaldo
+            prompt_codificado = quote(prompt_mejorado)
+            url_imagen = f"https://image.pollinations.ai/prompt/{prompt_codificado}?width=1024&height=1024&model=flux&nologo=true&enhance=true"
+            return jsonify({
+                "url": url_imagen,
+                "modelo": "pollinations-respaldo",
+                "mensaje": "Imagen generada (respaldo)"
+            })
             
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# RUTA 6: Qwen
+# RUTA 7: Qwen-Image (CARO - solo para premium o casos especiales)
 @app.route('/image-qwen', methods=['POST'])
 def generate_image_qwen():
     datos = request.get_json()
@@ -270,7 +330,7 @@ def generate_image_qwen():
             return jsonify({
                 "url": data['images'][0]['url'],
                 "modelo": "qwen-image",
-                "mensaje": "Imagen generada con Qwen"
+                "mensaje": "Imagen premium generada"
             })
         else:
             return jsonify({"error": response.text}), 500
@@ -278,7 +338,7 @@ def generate_image_qwen():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# RUTA 7: VIDEO con Wan 2.2 T2V (LIMITADO)
+# RUTA 8: VIDEO con Wan 2.2 T2V (MUY LIMITADO - solo primeros usuarios)
 @app.route('/video', methods=['POST'])
 def generate_video():
     datos = request.get_json()
@@ -299,7 +359,6 @@ def generate_video():
     try:
         prompt_mejorado = mejorar_prompt(prompt)
         
-        # PASO 1: Crear solicitud de video
         url = "https://api.siliconflow.com/v1/video/submit"
         headers = {
             "Authorization": f"Bearer {siliconflow_api_key}",
@@ -316,9 +375,8 @@ def generate_video():
         
         if response.status_code != 200:
             return jsonify({
-                "error": "Servicio no disponible o créditos agotados",
-                "details": response.text,
-                "mensaje": "¡Ups! Los videos gratuitos se agotaron. Pronto agregaremos plan PRO."
+                "error": "Videos no disponibles",
+                "mensaje": "Los videos gratuitos se agotaron. ¡Plan PRO próximamente! 🎬"
             }), 500
         
         data = response.json()
@@ -326,11 +384,10 @@ def generate_video():
         
         if not request_id:
             return jsonify({
-                "error": "No se recibió ID de solicitud",
+                "error": "Error al iniciar video",
                 "response": data
             }), 500
         
-        # PASO 2: Esperar a que se procese
         status_url = "https://api.siliconflow.com/v1/video/status"
         max_intentos = 60
         
@@ -352,29 +409,26 @@ def generate_video():
                             return jsonify({
                                 "url": video_url,
                                 "prompt_original": prompt,
-                                "prompt_mejorado": prompt_mejorado,
                                 "modelo": "wan-2.2-t2v",
                                 "formato": formato,
                                 "duracion": "5 segundos",
-                                "mensaje": "¡Video generado exitosamente! 🎬"
+                                "mensaje": "¡Video generado! 🎬"
                             })
                 
                 elif status == 'Failed':
                     return jsonify({
-                        "error": "El video falló al generarse",
-                        "details": status_data
+                        "error": "El video falló al generarse"
                     }), 500
         
         return jsonify({
-            "error": "El video tardó demasiado en generarse",
-            "request_id": request_id,
-            "mensaje": "Intenta de nuevo en unos minutos"
+            "error": "Tardó demasiado",
+            "mensaje": "Intenta de nuevo"
         }), 408
             
     except Exception as e:
         return jsonify({
             "error": str(e),
-            "mensaje": "Error al generar video. Los videos gratuitos pueden haberse agotado."
+            "mensaje": "Videos no disponibles temporalmente"
         }), 500
 
 if __name__ == '__main__':
