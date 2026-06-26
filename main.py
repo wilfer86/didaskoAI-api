@@ -92,7 +92,7 @@ def home():
         "endpoints": ["/chat", "/vision", "/image", "/image-flux", "/image-qwen", "/video"],
         "modelo_principal": "DeepSeek V3",
         "modelo_respaldo": "Gemini",
-        "video_disponible": "Wan 2.1 (limitado - primeros usuarios)"
+        "video_disponible": "Wan 2.2 (limitado - primeros usuarios)"
     })
 
 # RUTA 2: Chat
@@ -278,7 +278,7 @@ def generate_image_qwen():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# RUTA 7: VIDEO con Wan 2.1 (LIMITADO - primeros usuarios)
+# RUTA 7: VIDEO con Wan 2.2 T2V (LIMITADO)
 @app.route('/video', methods=['POST'])
 def generate_video():
     datos = request.get_json()
@@ -288,7 +288,6 @@ def generate_video():
     if not prompt:
         return jsonify({"error": "No prompt received"}), 400
 
-    # Mapeo de formatos para Wan 2.1
     formatos = {
         "16:9": "1280x720",
         "9:16": "720x1280",
@@ -298,7 +297,6 @@ def generate_video():
     image_size = formatos.get(formato, "720x1280")
 
     try:
-        # Mejorar prompt
         prompt_mejorado = mejorar_prompt(prompt)
         
         # PASO 1: Crear solicitud de video
@@ -308,18 +306,17 @@ def generate_video():
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "Wan-AI/Wan2.1-T2V-14B-Turbo",
+            "model": "Wan-AI/Wan2.2-T2V-A14B",
             "prompt": prompt_mejorado,
             "image_size": image_size,
             "seed": 42
         }
         
-        # Enviar solicitud
         response = requests.post(url, headers=headers, json=payload, timeout=60)
         
         if response.status_code != 200:
             return jsonify({
-                "error": "No hay créditos disponibles o servicio no disponible",
+                "error": "Servicio no disponible o créditos agotados",
                 "details": response.text,
                 "mensaje": "¡Ups! Los videos gratuitos se agotaron. Pronto agregaremos plan PRO."
             }), 500
@@ -333,9 +330,9 @@ def generate_video():
                 "response": data
             }), 500
         
-        # PASO 2: Esperar a que se procese (puede tardar 30-120 segundos)
+        # PASO 2: Esperar a que se procese
         status_url = "https://api.siliconflow.com/v1/video/status"
-        max_intentos = 60  # 60 intentos x 5 segundos = 5 minutos max
+        max_intentos = 60
         
         for intento in range(max_intentos):
             time.sleep(5)
@@ -348,17 +345,19 @@ def generate_video():
                 status = status_data.get('status', '')
                 
                 if status == 'Succeed':
-                    video_url = status_data.get('results', {}).get('videos', [{}])[0].get('url')
-                    if video_url:
-                        return jsonify({
-                            "url": video_url,
-                            "prompt_original": prompt,
-                            "prompt_mejorado": prompt_mejorado,
-                            "modelo": "wan-2.1",
-                            "formato": formato,
-                            "duracion": "5 segundos",
-                            "mensaje": "¡Video generado exitosamente! 🎬"
-                        })
+                    videos = status_data.get('results', {}).get('videos', [])
+                    if videos and len(videos) > 0:
+                        video_url = videos[0].get('url')
+                        if video_url:
+                            return jsonify({
+                                "url": video_url,
+                                "prompt_original": prompt,
+                                "prompt_mejorado": prompt_mejorado,
+                                "modelo": "wan-2.2-t2v",
+                                "formato": formato,
+                                "duracion": "5 segundos",
+                                "mensaje": "¡Video generado exitosamente! 🎬"
+                            })
                 
                 elif status == 'Failed':
                     return jsonify({
@@ -366,7 +365,6 @@ def generate_video():
                         "details": status_data
                     }), 500
         
-        # Si se acaba el tiempo
         return jsonify({
             "error": "El video tardó demasiado en generarse",
             "request_id": request_id,
