@@ -7,55 +7,81 @@ from urllib.parse import quote
 
 app = Flask(__name__)
 
-# 1. Conectar con las claves secretas de Render
+# Claves
 gemini_api_key = os.environ.get('GEMINI_API_KEY')
 siliconflow_api_key = os.environ.get('SILICONFLOW_API_KEY')
 
 genai.configure(api_key=gemini_api_key)
 
-# 2. La personalidad de Didasko
-instrucciones_didasko = """
-You are Didasko, an expert, wise and patient educational tutor.
-Your name comes from the Greek 'διδάσκω' which means 'to teach'.
-Your mission is to help students of primary, secondary and university levels worldwide.
+# Personalidad de Didasko (para DeepSeek y Gemini)
+instrucciones_didasko = """Eres Didasko, un tutor educativo experto, sabio y paciente.
+Tu nombre viene del griego 'διδάσκω' que significa 'enseñar'.
+Tu misión es ayudar a estudiantes de primaria, secundaria y universidad de todo el mundo.
 
-Your capabilities:
-- Write academic essays with good structure.
-- Guide research with sources and methodology.
-- Solve school problems step by step (math, science, history, etc.).
-- Write personalized speeches (ask who will deliver it and what they want to convey).
-- Analyze homework photos and solve them step by step.
-- Read and explain text from images.
+Capacidades:
+- Escribir ensayos académicos con buena estructura
+- Guiar investigaciones con fuentes y metodología
+- Resolver problemas escolares paso a paso (matemáticas, ciencias, historia, etc.)
+- Escribir discursos personalizados
+- Analizar fotos de tareas y resolverlas
+- Leer y explicar texto en imágenes
 
-IMPORTANT LANGUAGE RULE:
-- ALWAYS detect the language of the user's input.
-- ALWAYS respond in the SAME language the user wrote to you.
+REGLA DE IDIOMA:
+- Detecta el idioma del usuario y responde en el MISMO idioma
+- Si te escribe en español, responde en español
+- Si te escribe en inglés, responde en inglés
 
-Other rules:
-- Be clear, didactic and encourage the student.
-- Adapt your level: simple words for kids, academic tone for university.
-- Always be respectful and motivating.
-"""
+Reglas generales:
+- Sé claro, didáctico y motivador
+- Adapta el nivel: simple para niños, académico para universidad
+- Sé respetuoso y motivador siempre"""
 
-# 3. Modelo de Gemini (texto + visión)
-modelo = genai.GenerativeModel('gemini-2.5-flash-lite', system_instruction=instrucciones_didasko)
+# Modelo Gemini para visión y respaldo
+modelo_gemini = genai.GenerativeModel('gemini-2.5-flash-lite', system_instruction=instrucciones_didasko)
 
-# Función para mejorar el prompt con Gemini
+# Función para mejorar prompt de imagen
 def mejorar_prompt(prompt_original):
-    """Convierte el prompt en uno más profesional en inglés"""
     try:
-        instruccion = f"""
-        Convert this prompt into a detailed, professional image generation prompt.
-        Add: lighting, style, quality, composition details.
-        Keep the original idea but enhance it.
-        Respond ONLY with the enhanced prompt in ENGLISH, no explanations.
-        
-        Original: {prompt_original}
-        """
-        respuesta = modelo.generate_content(instruccion)
+        instruccion = f"""Convert this prompt into a detailed, professional image generation prompt.
+Add: lighting, style, quality, composition details.
+Keep the original idea but enhance it.
+Respond ONLY with the enhanced prompt in ENGLISH, no explanations.
+
+Original: {prompt_original}"""
+        respuesta = modelo_gemini.generate_content(instruccion)
         return respuesta.text.strip()
     except:
         return prompt_original
+
+# Función PRINCIPAL: DeepSeek V3 vía SiliconFlow
+def chat_deepseek(mensaje_usuario):
+    url = "https://api.siliconflow.com/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {siliconflow_api_key}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "deepseek-ai/DeepSeek-V3",
+        "messages": [
+            {"role": "system", "content": instrucciones_didasko},
+            {"role": "user", "content": mensaje_usuario}
+        ],
+        "temperature": 0.7,
+        "max_tokens": 2000
+    }
+    
+    response = requests.post(url, headers=headers, json=payload, timeout=60)
+    
+    if response.status_code == 200:
+        data = response.json()
+        return data['choices'][0]['message']['content']
+    else:
+        raise Exception(f"DeepSeek error: {response.text}")
+
+# Función RESPALDO: Gemini
+def chat_gemini(mensaje_usuario):
+    respuesta = modelo_gemini.generate_content(mensaje_usuario)
+    return respuesta.text
 
 # RUTA 1: Bienvenida
 @app.route('/')
@@ -64,10 +90,12 @@ def home():
         "message": "Welcome to DidaskoAI",
         "mensaje": "Bienvenido a DidaskoAI",
         "status": "running",
-        "endpoints": ["/chat", "/vision", "/image", "/image-flux", "/image-qwen"]
+        "endpoints": ["/chat", "/vision", "/image", "/image-flux", "/image-qwen"],
+        "modelo_principal": "DeepSeek V3",
+        "modelo_respaldo": "Gemini"
     })
 
-# RUTA 2: Chat de texto
+# RUTA 2: Chat (DeepSeek principal + Gemini respaldo)
 @app.route('/chat', methods=['POST'])
 def chat():
     datos = request.get_json()
@@ -76,11 +104,27 @@ def chat():
     if not mensaje_usuario:
         return jsonify({"error": "No message received"}), 400
 
+    # Intentar primero con DeepSeek
     try:
-        respuesta = modelo.generate_content(mensaje_usuario)
-        return jsonify({"respuesta": respuesta.text})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        respuesta_texto = chat_deepseek(mensaje_usuario)
+        return jsonify({
+            "respuesta": respuesta_texto,
+            "modelo": "deepseek-v3"
+        })
+    except Exception as e1:
+        # Si falla DeepSeek, usar Gemini como respaldo
+        try:
+            respuesta_texto = chat_gemini(mensaje_usuario)
+            return jsonify({
+                "respuesta": respuesta_texto,
+                "modelo": "gemini-respaldo"
+            })
+        except Exception as e2:
+            return jsonify({
+                "error": "Ambos modelos fallaron",
+                "deepseek_error": str(e1),
+                "gemini_error": str(e2)
+            }), 500
 
 # RUTA 3: Analizar imagen (Gemini Vision)
 @app.route('/vision', methods=['POST'])
@@ -99,7 +143,7 @@ def vision():
             "data": imagen_bytes
         }
         
-        respuesta = modelo.generate_content([pregunta, imagen_parte])
+        respuesta = modelo_gemini.generate_content([pregunta, imagen_parte])
         return jsonify({"respuesta": respuesta.text})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -184,7 +228,7 @@ def generate_image_flux():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# RUTA 6: Generar imagen con QWEN (MEJOR CALIDAD)
+# RUTA 6: Generar imagen con QWEN (alta calidad)
 @app.route('/image-qwen', methods=['POST'])
 def generate_image_qwen():
     datos = request.get_json()
@@ -203,13 +247,8 @@ def generate_image_qwen():
     image_size = formatos.get(formato, "1024x1024")
 
     try:
-        # Mejorar prompt con Gemini
         prompt_mejorado = mejorar_prompt(prompt)
-        
-        # Agregar tags de calidad
         prompt_final = f"{prompt_mejorado}, photorealistic, highly detailed, perfect anatomy, professional photography, sharp focus, 8k uhd, masterpiece"
-        
-        # Negative prompt (lo que NO queremos)
         negative_prompt = "deformed faces, bad anatomy, mutated hands, extra fingers, blurry, low quality, ugly, distorted, watermark, text"
         
         url = "https://api.siliconflow.com/v1/images/generations"
@@ -232,16 +271,11 @@ def generate_image_qwen():
             data = response.json()
             return jsonify({
                 "url": data['images'][0]['url'],
-                "prompt_original": prompt,
-                "prompt_mejorado": prompt_final,
                 "modelo": "qwen-image",
-                "mensaje": "Imagen generada con Qwen (alta calidad)"
+                "mensaje": "Imagen generada con Qwen"
             })
         else:
-            return jsonify({
-                "error": f"SiliconFlow error: {response.text}",
-                "status_code": response.status_code
-            }), 500
+            return jsonify({"error": response.text}), 500
             
     except Exception as e:
         return jsonify({"error": str(e)}), 500
