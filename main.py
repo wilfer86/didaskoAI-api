@@ -1,6 +1,7 @@
 import os
 import base64
 import requests
+import time
 from flask import Flask, request, jsonify
 import google.generativeai as genai
 from urllib.parse import quote
@@ -13,7 +14,7 @@ siliconflow_api_key = os.environ.get('SILICONFLOW_API_KEY')
 
 genai.configure(api_key=gemini_api_key)
 
-# Personalidad de Didasko (para DeepSeek y Gemini)
+# Personalidad de Didasko
 instrucciones_didasko = """Eres Didasko, un tutor educativo experto, sabio y paciente.
 Tu nombre viene del griego 'διδάσκω' que significa 'enseñar'.
 Tu misión es ayudar a estudiantes de primaria, secundaria y universidad de todo el mundo.
@@ -36,13 +37,12 @@ Reglas generales:
 - Adapta el nivel: simple para niños, académico para universidad
 - Sé respetuoso y motivador siempre"""
 
-# Modelo Gemini para visión y respaldo
 modelo_gemini = genai.GenerativeModel('gemini-2.5-flash-lite', system_instruction=instrucciones_didasko)
 
-# Función para mejorar prompt de imagen
+# Función para mejorar prompt
 def mejorar_prompt(prompt_original):
     try:
-        instruccion = f"""Convert this prompt into a detailed, professional image generation prompt.
+        instruccion = f"""Convert this prompt into a detailed, professional prompt for AI generation.
 Add: lighting, style, quality, composition details.
 Keep the original idea but enhance it.
 Respond ONLY with the enhanced prompt in ENGLISH, no explanations.
@@ -53,7 +53,7 @@ Original: {prompt_original}"""
     except:
         return prompt_original
 
-# Función PRINCIPAL: DeepSeek V3 vía SiliconFlow
+# DeepSeek V3 vía SiliconFlow
 def chat_deepseek(mensaje_usuario):
     url = "https://api.siliconflow.com/v1/chat/completions"
     headers = {
@@ -78,7 +78,6 @@ def chat_deepseek(mensaje_usuario):
     else:
         raise Exception(f"DeepSeek error: {response.text}")
 
-# Función RESPALDO: Gemini
 def chat_gemini(mensaje_usuario):
     respuesta = modelo_gemini.generate_content(mensaje_usuario)
     return respuesta.text
@@ -90,12 +89,13 @@ def home():
         "message": "Welcome to DidaskoAI",
         "mensaje": "Bienvenido a DidaskoAI",
         "status": "running",
-        "endpoints": ["/chat", "/vision", "/image", "/image-flux", "/image-qwen"],
+        "endpoints": ["/chat", "/vision", "/image", "/image-flux", "/image-qwen", "/video"],
         "modelo_principal": "DeepSeek V3",
-        "modelo_respaldo": "Gemini"
+        "modelo_respaldo": "Gemini",
+        "video_disponible": "Wan 2.1 (limitado - primeros usuarios)"
     })
 
-# RUTA 2: Chat (DeepSeek principal + Gemini respaldo)
+# RUTA 2: Chat
 @app.route('/chat', methods=['POST'])
 def chat():
     datos = request.get_json()
@@ -104,7 +104,6 @@ def chat():
     if not mensaje_usuario:
         return jsonify({"error": "No message received"}), 400
 
-    # Intentar primero con DeepSeek
     try:
         respuesta_texto = chat_deepseek(mensaje_usuario)
         return jsonify({
@@ -112,7 +111,6 @@ def chat():
             "modelo": "deepseek-v3"
         })
     except Exception as e1:
-        # Si falla DeepSeek, usar Gemini como respaldo
         try:
             respuesta_texto = chat_gemini(mensaje_usuario)
             return jsonify({
@@ -126,7 +124,7 @@ def chat():
                 "gemini_error": str(e2)
             }), 500
 
-# RUTA 3: Analizar imagen (Gemini Vision)
+# RUTA 3: Vision
 @app.route('/vision', methods=['POST'])
 def vision():
     datos = request.get_json()
@@ -148,7 +146,7 @@ def vision():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# RUTA 4: Generar imagen con Pollinations (RESPALDO)
+# RUTA 4: Pollinations
 @app.route('/image', methods=['POST'])
 def generate_image():
     datos = request.get_json()
@@ -179,7 +177,7 @@ def generate_image():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# RUTA 5: Generar imagen con Flux Schnell
+# RUTA 5: Flux
 @app.route('/image-flux', methods=['POST'])
 def generate_image_flux():
     datos = request.get_json()
@@ -228,7 +226,7 @@ def generate_image_flux():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# RUTA 6: Generar imagen con QWEN (alta calidad)
+# RUTA 6: Qwen
 @app.route('/image-qwen', methods=['POST'])
 def generate_image_qwen():
     datos = request.get_json()
@@ -279,6 +277,107 @@ def generate_image_qwen():
             
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+# RUTA 7: VIDEO con Wan 2.1 (LIMITADO - primeros usuarios)
+@app.route('/video', methods=['POST'])
+def generate_video():
+    datos = request.get_json()
+    prompt = datos.get('prompt', '')
+    formato = datos.get('format', '9:16')
+
+    if not prompt:
+        return jsonify({"error": "No prompt received"}), 400
+
+    # Mapeo de formatos para Wan 2.1
+    formatos = {
+        "16:9": "1280x720",
+        "9:16": "720x1280",
+        "1:1": "960x960"
+    }
+
+    image_size = formatos.get(formato, "720x1280")
+
+    try:
+        # Mejorar prompt
+        prompt_mejorado = mejorar_prompt(prompt)
+        
+        # PASO 1: Crear solicitud de video
+        url = "https://api.siliconflow.com/v1/video/submit"
+        headers = {
+            "Authorization": f"Bearer {siliconflow_api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "Wan-AI/Wan2.1-T2V-14B-Turbo",
+            "prompt": prompt_mejorado,
+            "image_size": image_size,
+            "seed": 42
+        }
+        
+        # Enviar solicitud
+        response = requests.post(url, headers=headers, json=payload, timeout=60)
+        
+        if response.status_code != 200:
+            return jsonify({
+                "error": "No hay créditos disponibles o servicio no disponible",
+                "details": response.text,
+                "mensaje": "¡Ups! Los videos gratuitos se agotaron. Pronto agregaremos plan PRO."
+            }), 500
+        
+        data = response.json()
+        request_id = data.get('requestId') or data.get('id')
+        
+        if not request_id:
+            return jsonify({
+                "error": "No se recibió ID de solicitud",
+                "response": data
+            }), 500
+        
+        # PASO 2: Esperar a que se procese (puede tardar 30-120 segundos)
+        status_url = "https://api.siliconflow.com/v1/video/status"
+        max_intentos = 60  # 60 intentos x 5 segundos = 5 minutos max
+        
+        for intento in range(max_intentos):
+            time.sleep(5)
+            
+            status_payload = {"requestId": request_id}
+            status_response = requests.post(status_url, headers=headers, json=status_payload, timeout=30)
+            
+            if status_response.status_code == 200:
+                status_data = status_response.json()
+                status = status_data.get('status', '')
+                
+                if status == 'Succeed':
+                    video_url = status_data.get('results', {}).get('videos', [{}])[0].get('url')
+                    if video_url:
+                        return jsonify({
+                            "url": video_url,
+                            "prompt_original": prompt,
+                            "prompt_mejorado": prompt_mejorado,
+                            "modelo": "wan-2.1",
+                            "formato": formato,
+                            "duracion": "5 segundos",
+                            "mensaje": "¡Video generado exitosamente! 🎬"
+                        })
+                
+                elif status == 'Failed':
+                    return jsonify({
+                        "error": "El video falló al generarse",
+                        "details": status_data
+                    }), 500
+        
+        # Si se acaba el tiempo
+        return jsonify({
+            "error": "El video tardó demasiado en generarse",
+            "request_id": request_id,
+            "mensaje": "Intenta de nuevo en unos minutos"
+        }), 408
+            
+    except Exception as e:
+        return jsonify({
+            "error": str(e),
+            "mensaje": "Error al generar video. Los videos gratuitos pueden haberse agotado."
+        }), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080)
